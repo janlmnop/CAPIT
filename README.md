@@ -1,4 +1,18 @@
 *change soon
+changes:
+- ports in the following files are changed to 8080 cuz may conflict
+  - server.js
+  - Dashboard.tsx
+  - Login.tsx
+  - Session.tsx 
+  - SessionDetail.tsx
+  - Setup.tsx
+  - Setup.tsx
+  - Survey.tsx
+- added the following files
+  - Setup_Tester.tsx
+  - Session_Tester.tsx
+  - Survey_Tester.tsx
 
 # FaMiLis - Project Overview
 
