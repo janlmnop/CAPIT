@@ -291,6 +291,66 @@ async function start() {
     }
   });
 
+  app.delete("/api/participants/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ ok: false, error: "Invalid id." });
+    }
+    try {
+      const [result] = await pool.query(
+        `DELETE FROM participants WHERE participant_id = ?`,
+        [id]
+      );
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ ok: false, error: "Participant not found." });
+      }
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("DELETE /api/participants error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  app.put("/api/participants/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ ok: false, error: "Invalid id." });
+    }
+    const rawLabel = req.body?.testerLabel;
+    const testerLabel = typeof rawLabel === "string" ? rawLabel.trim() : "";
+    const ageRaw = req.body?.age;
+    const genderRaw = req.body?.gender;
+    if (!testerLabel) {
+      return res.status(400).json({ ok: false, error: "testerLabel is required." });
+    }
+    const age =
+      ageRaw == null || ageRaw === ""
+        ? null
+        : Number.isFinite(Number(ageRaw))
+          ? Math.round(Number(ageRaw))
+          : null;
+    const allowedGenders = new Set(["male", "female", "other"]);
+    const gender = genderRaw == null || genderRaw === "" ? null : String(genderRaw);
+    if (gender != null && !allowedGenders.has(gender)) {
+      return res.status(400).json({ ok: false, error: "gender must be male, female, or other." });
+    }
+    try {
+      const [result] = await pool.query(
+        `UPDATE participants
+        SET tester_label = ?, age = ?, gender = ?
+        WHERE participant_id = ?`,
+        [testerLabel, age, gender, id]
+      );
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ ok: false, error: "Participant not found." });
+      }
+      return res.json({ ok: true, participant: { id, testerLabel, age, gender } });
+    } catch (err) {
+      console.error("PUT /api/participants error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
   // Foods list for dashboard
   app.get("/api/foods", async (_req, res) => {
     try {
@@ -1302,6 +1362,8 @@ async function start() {
       return res.status(500).json({ ok: false, error: "Server error." });
     }
   });
+
+  
 
   const port = process.env.PORT || 8080;
   app.listen(port, () => {

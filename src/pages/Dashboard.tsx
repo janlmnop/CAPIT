@@ -1,3 +1,15 @@
+/**
+ * notes:
+ * - backend: change table columns
+ * - Manage Kiosks is not yet finalized. Video streams should come from nodes.
+ * - also, change ui if need be
+ * 
+ * references:
+ * - table: https://stackoverflow.com/questions/60518353/how-to-display-mysql-table-in-react-js-table
+ * - table: https://github.com/machadop1407/react-table-tutorial.git
+ * - table: https://youtu.be/Q3ixb1w-QaY?si=AhrthqljoNJg1D6u
+ **/
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { performLogout } from "../RequireAuth";
@@ -14,6 +26,7 @@ import {
   Tooltip,
 } from "chart.js";
 import { Line, Radar } from "react-chartjs-2";
+import React from "react";
 
 ChartJS.register(
   RadialLinearScale,
@@ -28,6 +41,7 @@ ChartJS.register(
 
 type TabKey = "food" | "stats" | "kiosks" | "participants";
 type SessionStatus = "pending" | "active" | "completed" | "cancelled";
+type Gender = "male" | "female" | "other";
 
 type Session = {
   id: number;
@@ -62,6 +76,22 @@ type Analytics = {
   sessionCount: number;
   frameLogCount: number;
   surveyCount: number;
+};
+
+type Participant = {
+  id: number;
+  testerLabel: string | null;
+  age: number;
+  gender: Gender;
+  createdAt: string | null;
+}
+
+type KioskStatus = "recording" | "paused" | "not_connected";
+
+type Kiosk = {
+  id: number;
+  status: KioskStatus;
+  elapsedSeconds: number;
 };
 
 function clampPct(n: number) {
@@ -114,10 +144,10 @@ export default function Dashboard() {
   const [tab, setTab] = useState<TabKey>("food");
   const [foods, setFoods] = useState<Food[]>([]);
   const [expandedFoodId, setExpandedFoodId] = useState<number | null>(null);
-  const [showAdd, setShowAdd] = useState(false);
+  const [showAddFood, setShowAddFood] = useState(false);
   const [newFood, setNewFood] = useState({
     name: "",
-    category: "",
+    category: ""
   });
   const [newFoodImageFile, setNewFoodImageFile] = useState<File | null>(null);
   const [sessionsByFoodId, setSessionsByFoodId] = useState<Record<number, Session[]>>({});
@@ -131,6 +161,77 @@ export default function Dashboard() {
   const [deletingFoodId, setDeletingFoodId] = useState<number | null>(null);
   const [deleteFoodError, setDeleteFoodError] = useState<string | null>(null);
   const foodsAbortRef = useRef<AbortController | null>(null);
+
+  // NEW : Participant consts
+  const parAbortRef = useRef<AbortController | null>(null);
+  const [parLoading, setParLoading] = useState(true);
+  const [parError, setParError] = useState<string | null>(null);
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [expandedParId, setExpandedParId] = useState<number | null>(null);
+  const [deletingParId, setDeletingParId] = useState<number | null>(null);
+  const [deleteParError, setDeleteParError] = useState<string | null>(null);
+  const [parToDelete, setParToDelete] = useState<Participant | null>(null);
+  const [newParticipant, setNewParticipant] = useState({
+    name: "",
+    age: "",
+    gender: ""
+  });
+  const [showAddParticipant, setShowAddParticipant] = useState(false);
+  const [editingParId, setEditingParId] = useState<number | null>(null);
+  const [editParError, setEditParError] = useState<string | null>(null);
+  const [parToEdit, setParToEdit] = useState<Participant | null>(null);
+
+  // NEW : (placeholder) Manage Kiosk consts
+  const [kiosks, setKiosks] = useState<Kiosk[]>([
+    { id: 1, status: "recording", elapsedSeconds: 25 },
+    { id: 2, status: "recording", elapsedSeconds: 25 },
+    { id: 3, status: "recording", elapsedSeconds: 25 },
+    { id: 4, status: "recording", elapsedSeconds: 25 },
+    { id: 5, status: "recording", elapsedSeconds: 25 },
+    { id: 6, status: "recording", elapsedSeconds: 25 },
+    { id: 7, status: "not_connected", elapsedSeconds: 0 },
+    { id: 8, status: "not_connected", elapsedSeconds: 0 },
+  ]);
+
+  // recording timers
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setKiosks((prev) =>
+        prev.map((k) =>
+          k.status === "recording"
+            ? { ...k, elapsedSeconds: k.elapsedSeconds + 1 }
+            : k
+        )
+      );
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // recording handlers
+  const onPauseKiosk = (id: number) => {
+    setKiosks((prev) =>
+      prev.map((k) =>
+        k.id === id
+          ? { ...k, status: k.status === "recording" ? "paused" : "recording" }
+          : k
+      )
+    );
+  };
+
+  const onStopKiosk = (id: number) => {
+    setKiosks((prev) =>
+      prev.map((k) =>
+        k.id === id ? { ...k, status: "not_connected", elapsedSeconds: 0 } : k
+      )
+    );
+  };
+
+  // recording helper : time formatting
+  function formatElapsed(seconds: number) {
+    const m = Math.floor(seconds / 60).toString().padStart(2, "0");
+    const s = (seconds % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
+  }
 
   useEffect(() => {
     foodsAbortRef.current?.abort();
@@ -161,6 +262,44 @@ export default function Dashboard() {
     }
 
     void loadFoods();
+    return () => ac.abort();
+  }, []);
+
+  useEffect(() => {
+    parAbortRef.current?.abort();
+    const ac = new AbortController();
+    parAbortRef.current = ac;
+
+    async function loadParticipants() {
+      setParLoading(true);
+      setParError(null);
+      try {
+        const res = await fetch(`${API_BASE}/api/participants`, { signal: ac.signal });
+        const json = await res.json();
+        if (!res.ok || !json?.ok) {
+          throw new Error(json?.error || "Failed to load participants.");
+        }
+        const list: Participant[] = (json.participants ?? []).map((p: any) => ({
+          id: Number(p.id ?? p.participant_id),
+          testerLabel: p.testerLabel ?? p.tester_label ?? null,
+          age: p.age ?? 0,
+          gender: (p.gender ?? "other") as Gender,
+          createdAt: p.createdAt ?? p.created_at ?? null,
+        }));
+        setParticipants(list);
+        setExpandedParId((prev) => {
+          if (prev && list.some((p) => p.id === prev)) return prev;
+          return null;
+        });
+      } catch (err: any) {
+        if (err?.name === "AbortError") return;
+        setParError(err?.message || "Failed to load participants.");
+      } finally {
+        setParLoading(false);
+      }
+    }
+
+    void loadParticipants();
     return () => ac.abort();
   }, []);
 
@@ -484,12 +623,106 @@ export default function Dashboard() {
       };
       setFoods((prev) => [newRow, ...prev]);
       setExpandedFoodId(created.id);
-      setShowAdd(false);
+      setShowAddFood(false);
       setTab("food");
       setNewFood({ name: "", category: "" });
       setNewFoodImageFile(null);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // NEW : Manage Participant Functions
+  const onDeleteParticipant = async (participantId: number) => {
+    if (!participantId) return;  
+    try {
+      setDeletingParId(participantId);
+      setDeleteParError(null);
+      const res = await fetch(`${API_BASE}/api/participants/${participantId}`, { method: "DELETE" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Failed to delete participant.");
+      }
+      setParticipants((prev) => prev.filter((p) => p.id !== participantId));
+      setExpandedParId((prev) => {
+        if (prev !== participantId) return prev;
+        const remaining = participants.filter((p) => p.id !== participantId);
+        return remaining[0]?.id ?? null;
+      });
+    } catch (err) {
+      setDeleteParError((err as any)?.message || "Failed to delete participant.");
+    } finally {
+      setDeletingParId(null);
+      setParToDelete(null);
+    }
+  };
+
+  const onAddParticipant = async () => {
+    const name = newParticipant.name.trim();
+    const age = newParticipant.age;
+    const gender = newParticipant.gender;
+    // other fields
+    if (!name || !age || !gender) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/participants`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ testerLabel: name, age: Number(age), gender }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Failed to add participant.");
+      }
+      const created = json.participant as { id: number; testerLabel: string | null; age: number | null; gender: Gender | null; createdAt: string };
+      const newRow: Participant = {
+        id: created.id,
+        testerLabel: created.testerLabel,
+        age: created.age ?? 0,
+        gender: created.gender ?? "other",
+        createdAt: created.createdAt,
+      };
+    
+      setParticipants((prev) => [newRow, ...prev]);
+      setExpandedParId(created.id);
+      setShowAddParticipant(false);
+      setTab("participants");
+      setNewParticipant({ name: "", age: "", gender: ""});
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const onEditParticipant = async () => {
+    if (!parToEdit) return;
+    const name = parToEdit.testerLabel?.trim() ?? "";
+    if (!name) return;
+    if (!parToEdit.id) return;  
+
+    try {
+      setEditingParId(parToEdit.id);
+      setEditParError(null);
+      const res = await fetch(`${API_BASE}/api/participants/${parToEdit.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ testerLabel: name, age: parToEdit.age, gender: parToEdit.gender }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Failed to update participant.");
+      }
+      setParticipants((prev) =>
+        prev.map((p) =>
+          p.id === parToEdit.id
+            ? { ...p, testerLabel: name, age: parToEdit.age, gender: parToEdit.gender }
+            : p
+        )
+      );
+      setParToEdit(null);
+    } catch (err) {
+      setEditParError((err as any)?.message || "Failed to update participant.");
+    } finally {
+      setEditingParId(null);
     }
   };
 
@@ -534,7 +767,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-center gap-3 mb-5">
             <button
               type="button"
-              onClick={() => setShowAdd(true)}
+              onClick={() => setShowAddFood(true)}
               className="inline-flex items-center gap-2 bg-[#e8174a] hover:bg-[#c9143f] text-white px-4 py-2.5 rounded-md text-sm font-semibold transition-colors"
             >
               <span aria-hidden="true">➕</span>
@@ -562,7 +795,6 @@ export default function Dashboard() {
             <TabButton active={tab === "food"} onClick={() => setTab("food")}>
               Food Management
             </TabButton>
-            {/* NEW */}
             <TabButton active={tab === "kiosks"} onClick={() => setTab("kiosks")}>
               Manage Kiosks
             </TabButton>
@@ -988,21 +1220,178 @@ export default function Dashboard() {
               </div>
             </section>
           ) : tab === "kiosks" ? (
-            // NEW : Manage Kiosks Tab
+            // NEW : temp Manage Kiosks Tab
             <section className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-              // TASKS : insert here
+              <h2 className="text-gray-900 font-bold mb-4">Manage Kiosks</h2>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {kiosks.map((kiosk) => {
+                  const isConnected = kiosk.status !== "not_connected";
+                  const isRecording = kiosk.status === "recording";
+                  const isPaused = kiosk.status === "paused";
+
+                  return (
+                    <div key={kiosk.id} className="flex flex-col gap-2">
+                      {/* Camera card */}
+                      <div className="bg-gray-200 rounded-xl overflow-hidden relative aspect-[4/3]">
+                        {/* Timer + status badge */}
+                        <div className="absolute top-2 left-2 right-2 flex items-center justify-between z-10">
+                          <span className="text-[13px] font-bold text-gray-900">
+                            {formatElapsed(kiosk.elapsedSeconds)}
+                          </span>
+                          {isRecording && (
+                            <span className="inline-flex items-center gap-1.5 bg-[#e8174a] text-white text-[11px] font-semibold px-2.5 py-1 rounded-full">
+                              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                              recording
+                            </span>
+                          )}
+                          {isPaused && (
+                            <span className="inline-flex items-center gap-1.5 bg-orange-400 text-white text-[11px] font-semibold px-2.5 py-1 rounded-full">
+                              <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                              paused
+                            </span>
+                          )}
+                          {!isConnected && (
+                            <span className="inline-flex items-center gap-1.5 bg-gray-400 text-white text-[11px] font-semibold px-2.5 py-1 rounded-full">
+                              not connected
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Camera feed / placeholder */}
+                        <div className="w-full h-full flex items-center justify-center">
+                          {isConnected ? (
+                            /* Person silhouette */
+                            <svg viewBox="0 0 80 90" className="w-2/3 h-2/3 text-gray-500" fill="currentColor">
+                              <circle cx="40" cy="28" r="18" />
+                              <ellipse cx="40" cy="80" rx="32" ry="22" />
+                            </svg>
+                          ) : (
+                            /* Camera off icon */
+                            <svg viewBox="0 0 24 24" className="w-16 h-16 text-gray-400" fill="none" stroke="currentColor" strokeWidth="1.5">
+                              <path d="M3 3l18 18M10.5 10.677A2 2 0 0 0 10 12a2 2 0 0 0 2 2c.48 0 .92-.17 1.255-.45M6.228 6.228A10.5 10.5 0 0 0 3 12c0 1.68.41 3.26 1.13 4.65M6.228 6.228A10.5 10.5 0 0 1 12 4.5c4.756 0 8.773 3.162 10.13 7.5-.47 1.47-1.24 2.8-2.23 3.9M6.228 6.228 3 3m3.228 3.228 3.65 3.65M16.5 16.5l2.272 2.272" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Controls */}
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => onPauseKiosk(kiosk.id)}
+                          disabled={!isConnected}
+                          className={`flex-1 py-1.5 rounded-md text-[11px] font-bold transition-colors ${
+                            isConnected
+                              ? "bg-orange-400 hover:bg-orange-500 text-white"
+                              : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                          }`}
+                        >
+                          {isPaused ? "Resume" : "Pause"} recording
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onStopKiosk(kiosk.id)}
+                          disabled={!isConnected}
+                          className={`flex-1 py-1.5 rounded-md text-[11px] font-bold transition-colors ${
+                            isConnected
+                              ? "bg-[#e8174a] hover:bg-[#c9143f] text-white"
+                              : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                          }`}
+                        >
+                          Stop recording
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </section>
           ) : tab === "participants" ? (
             // NEW : Manage Participants Tab
-            <section className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-              // TASKS : insert here
+            <section className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 overflow-x-auto">
+              {parLoading ? (
+                <div className="text-center py-14 text-gray-500">
+                  <p className="text-sm">Loading participants…</p>
+                </div>
+              ) : parError ? (
+                <div className="text-center py-14 text-gray-500">
+                  <p className="text-sm">Failed to load participants.</p>
+                  <p className="text-xs mt-2 text-gray-400">{parError}</p>
+                </div>
+              ) : participants.length === 0 ? (
+                <div className="text-center py-14 text-gray-500">
+                  <p className="text-sm">No participants added yet.</p>
+                </div>
+              ) : (
+                <div>
+                  <div className="flex w-225 h-15 items-center justify-between">
+                    <h2 className="text-gray-900 font-bold mb-4">Food Management</h2>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddParticipant(true)}
+                      className="inline-flex items-center gap-2 bg-[#e8174a] hover:bg-[#c9143f] text-white px-4 py-2.5 rounded-md text-sm font-semibold transition-colors"
+                    >
+                      <span aria-hidden="true">➕</span>
+                      Add New Participant
+                    </button>
+                  </div>
+
+                  <table className="min-w-max w-full text-center text-[12px] border-separate border-spacing-x-4 gap-10">
+                    <thead>
+                      <tr>
+                        <th scope="col">Participant ID</th>
+                        <th scope="col">Session Number</th>
+                        <th scope="col">Kiosk Number</th>
+                        <th scope="col">Name</th>
+                        <th scope="col">Contact Number</th>
+                        <th scope="col">GCash Number</th>
+                        <th scope="col">Date & Time</th>
+                        <th scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {participants.sort((a, b) => a.id-b.id).map(p => {
+                        return (
+                          <tr key={p.id}>
+                            <td>{p.id}</td>
+                            <td>-</td>                {/*session_id*/}
+                            <td>-</td>                {/*kiosk_id*/}
+                            <td>{p.testerLabel}</td> {/*name*/}
+                            <td>-</td>                {/*contact_number*/}
+                            <td>-</td>                {/*gcash_number*/}
+                            <td>{formatDateTime(p.createdAt)}</td>
+                            <td>
+                              <button
+                                type="button"
+                                onClick={() => setParToEdit(p)}
+                                className="text-[12px] font-semibold text-black hover:text-green transition-colors inline-flex items-center gap-1"
+                              >
+                                <span aria-hidden="true">✍️</span>
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setParToDelete(p)}
+                                className="text-[12px] font-semibold text-[#e8174a] hover:text-[#c9143f] transition-colors inline-flex items-center gap-1"
+                              >
+                                <span aria-hidden="true">🗑️</span>
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </section>
           ) : null}
         </div>
       </main>
 
       {/* Add Food Modal */}
-      {showAdd && (
+      {showAddFood && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
             <h2 className="text-gray-900 font-bold mb-4">Add New Food</h2>
@@ -1041,7 +1430,7 @@ export default function Dashboard() {
             <div className="flex gap-3 mt-5">
               <button
                 type="button"
-                onClick={() => setShowAdd(false)}
+                onClick={() => setShowAddFood(false)}
                 className="flex-1 border border-gray-200 text-gray-700 hover:bg-gray-50 py-2 rounded-md text-sm font-semibold transition-colors"
               >
                 Cancel
@@ -1087,6 +1476,164 @@ export default function Dashboard() {
           </div>
         </div>
       ) : null}
+
+      {/* Add Participant Modal */}
+      {showAddParticipant && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+            <h2 className="text-gray-900 font-bold mb-4">Add New Participant</h2>
+
+            <div className="space-y-3">
+              <Field label="Participant Name *">
+                <input
+                  type="text"
+                  value={newParticipant.name}
+                  onChange={(e) => setNewParticipant((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="e.g. John Doe"
+                  className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30"
+                />
+              </Field>
+
+              <Field label="Age *">
+                <input
+                  type="number"
+                  value={newParticipant.age}
+                  onChange={(e) => setNewParticipant((p) => ({ ...p, age: e.target.value }))}
+                  placeholder="e.g. 21"
+                  className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30"
+                />
+              </Field>
+
+              <Field label="Gender *">
+                <select
+                  value={newParticipant.gender}
+                  onChange={(e) => setNewParticipant((p) => ({ ...p, gender: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30"
+                >
+                  <option value="">Select gender…</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                </select>
+              </Field>
+            </div>
+
+            <div className="flex gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => setShowAddParticipant(false)}
+                className="flex-1 border border-gray-200 text-gray-700 hover:bg-gray-50 py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onAddParticipant}
+                className="flex-1 bg-[#e8174a] hover:bg-[#c9143f] text-white py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                Add Participant
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {parToDelete ? (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+            <h2 className="text-gray-900 font-bold mb-2">Delete participant?</h2>
+            <p className="text-sm text-gray-600">
+              This will permanently remove <span className="font-semibold">{parToDelete.testerLabel}</span> and
+              its related sessions.
+            </p>
+            {deleteParError ? <p className="text-xs text-red-600 mt-2">{deleteParError}</p> : null}
+            <div className="flex gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => setParToDelete(null)}
+                disabled={deletingParId === parToDelete.id}
+                className="flex-1 border border-gray-200 text-gray-700 hover:bg-gray-50 py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => onDeleteParticipant(parToDelete.id)}
+                disabled={deletingParId === parToDelete.id}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                {deletingParId === parToDelete.id ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {parToEdit && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+            <h2 className="text-gray-900 font-bold mb-4">Edit Participant</h2>
+
+            <div className="space-y-3">
+              <Field label="Participant Name *">
+                <input
+                  type="text"
+                  value={parToEdit.testerLabel ?? ""}
+                  onChange={(e) =>
+                    setParToEdit((p) => p ? { ...p, testerLabel: e.target.value } : p)
+                  }
+                  placeholder="e.g. John Doe"
+                  className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30"
+                />
+              </Field>
+
+              <Field label="Age *">
+                <input
+                  type="number"
+                  value={parToEdit.age ?? ""}
+                  onChange={(e) => setParToEdit((p) => p ? { ...p, age: Number(e.target.value) } : p)}
+                  placeholder="e.g. 21"
+                  className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30"
+                />
+              </Field>
+
+              <Field label="Gender *">
+                <select
+                  value={parToEdit.gender ?? ""}
+                  onChange={(e) => setParToEdit((p) => p ? { ...p, gender: e.target.value as Gender } : p)}
+                  className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30"
+                >
+                  <option value="">Select gender…</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                </select>
+              </Field>
+            </div>
+
+            {editParError && (
+              <p className="text-xs text-red-600 mt-2">{editParError}</p>
+            )}
+
+            <div className="flex gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => { setParToEdit(null); setEditParError(null); }}
+                disabled={editingParId === parToEdit.id}
+                className="flex-1 border border-gray-200 text-gray-700 hover:bg-gray-50 py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onEditParticipant}
+                disabled={editingParId === parToEdit.id}
+                className="flex-1 bg-[#e8174a] hover:bg-[#c9143f] text-white py-2 rounded-md text-sm font-semibold transition-colors"
+              >
+                {editingParId === parToEdit.id ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
