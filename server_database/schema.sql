@@ -16,14 +16,30 @@ CREATE TABLE IF NOT EXISTS users (
   last_login TIMESTAMP NULL
 );
 
+-- KIOSK
+CREATE TABLE IF NOT EXISTS kiosk (
+  kiosk_id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NULL,
+  location TEXT NULL,
+  image_url TEXT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- PARTICIPANTS (test subjects)
 CREATE TABLE IF NOT EXISTS participants (
   participant_id INT AUTO_INCREMENT PRIMARY KEY,
-  tester_label VARCHAR(50), -- e.g. "T-01"
+  name VARCHAR(255) NOT NULL,
+  kiosk_id INT NULL,
+  contact_number VARCHAR(50) NULL,
+  gcash_number VARCHAR(50) NULL,
   age INT,
   gender ENUM('male', 'female', 'other'),
+  photo_url TEXT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
+  INDEX idx_participant_kiosk (kiosk_id),
+
+  CONSTRAINT fk_participant_kiosk FOREIGN KEY (kiosk_id) REFERENCES kiosk(kiosk_id) ON DELETE SET NULL,
   CONSTRAINT chk_participant_age CHECK (age >= 0 AND age <= 120)
 );
 
@@ -41,6 +57,7 @@ CREATE TABLE IF NOT EXISTS food_products (
 CREATE TABLE IF NOT EXISTS sessions (
   session_id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT NOT NULL,
+  kiosk_id INT NULL,
   participant_id INT NULL,
   food_id INT NOT NULL,
   start_time TIMESTAMP NULL,
@@ -49,10 +66,12 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
   INDEX idx_session_user (user_id),
+  INDEX idx_session_kiosk (kiosk_id),
   INDEX idx_session_food (food_id),
   INDEX idx_session_participant (participant_id),
 
   CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+  CONSTRAINT fk_sessions_kiosk FOREIGN KEY (kiosk_id) REFERENCES kiosk(kiosk_id) ON DELETE SET NULL,
   CONSTRAINT fk_sessions_participant FOREIGN KEY (participant_id) REFERENCES participants(participant_id) ON DELETE SET NULL,
   CONSTRAINT fk_sessions_food FOREIGN KEY (food_id) REFERENCES food_products(food_id),
   CONSTRAINT chk_end_after_start CHECK (end_time IS NULL OR end_time >= start_time)
@@ -119,9 +138,9 @@ CREATE TABLE IF NOT EXISTS survey_results (
 -- RELATIONSHIPS
 -- =====================================================
 -- users (staff/admin) 1 ──▶ M sessions
+-- kiosk                1 ──▶ M sessions (added)
 -- participants         1 ──▶ M sessions
 -- food_products        1 ──▶ M sessions
 -- sessions             1 ──▶ M frame_logs
 -- sessions             1 ──▶ M system_logs
 -- sessions             1 ──▶ 1 survey_results
-

@@ -80,9 +80,13 @@ type Analytics = {
 
 type Participant = {
   id: number;
-  testerLabel: string | null;
+  name: string | null;
+  kioskId?: number | null;
+  contactNumber?: string | null;
+  gcashNumber?: string | null;
   age: number;
   gender: Gender;
+  photoUrl?: string | null;
   createdAt: string | null;
 }
 
@@ -281,9 +285,13 @@ export default function Dashboard() {
         }
         const list: Participant[] = (json.participants ?? []).map((p: any) => ({
           id: Number(p.id ?? p.participant_id),
-          testerLabel: p.testerLabel ?? p.tester_label ?? null,
+          name: p.name ?? p.testerLabel ?? p.tester_label ?? null,
+          kioskId: p.kioskId ?? p.kiosk_id ?? null,
+          contactNumber: p.contactNumber ?? p.contact_number ?? null,
+          gcashNumber: p.gcashNumber ?? p.gcash_number ?? null,
           age: p.age ?? 0,
           gender: (p.gender ?? "other") as Gender,
+          photoUrl: p.photoUrl ?? p.photo_url ?? null,
           createdAt: p.createdAt ?? p.created_at ?? null,
         }));
         setParticipants(list);
@@ -668,16 +676,16 @@ export default function Dashboard() {
       const res = await fetch(`${API_BASE}/api/participants`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ testerLabel: name, age: Number(age), gender }),
+        body: JSON.stringify({ name: name, age: Number(age), gender }),
       });
       const json = await res.json();
       if (!res.ok || !json?.ok) {
         throw new Error(json?.error || "Failed to add participant.");
       }
-      const created = json.participant as { id: number; testerLabel: string | null; age: number | null; gender: Gender | null; createdAt: string };
+      const created = json.participant as { id: number; name: string | null; age: number | null; gender: Gender | null; createdAt: string };
       const newRow: Participant = {
         id: created.id,
-        testerLabel: created.testerLabel,
+        name: created.name,
         age: created.age ?? 0,
         gender: created.gender ?? "other",
         createdAt: created.createdAt,
@@ -695,7 +703,7 @@ export default function Dashboard() {
 
   const onEditParticipant = async () => {
     if (!parToEdit) return;
-    const name = parToEdit.testerLabel?.trim() ?? "";
+    const name = parToEdit.name?.trim() ?? "";
     if (!name) return;
     if (!parToEdit.id) return;  
 
@@ -705,7 +713,7 @@ export default function Dashboard() {
       const res = await fetch(`${API_BASE}/api/participants/${parToEdit.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ testerLabel: name, age: parToEdit.age, gender: parToEdit.gender }),
+        body: JSON.stringify({ name: name, age: parToEdit.age, gender: parToEdit.gender }),
       });
       const json = await res.json();
       if (!res.ok || !json?.ok) {
@@ -714,7 +722,7 @@ export default function Dashboard() {
       setParticipants((prev) =>
         prev.map((p) =>
           p.id === parToEdit.id
-            ? { ...p, testerLabel: name, age: parToEdit.age, gender: parToEdit.gender }
+            ? { ...p, name: name, age: parToEdit.age, gender: parToEdit.gender }
             : p
         )
       );
@@ -1356,7 +1364,7 @@ export default function Dashboard() {
                             <td>{p.id}</td>
                             <td>-</td>                {/*session_id*/}
                             <td>-</td>                {/*kiosk_id*/}
-                            <td>{p.testerLabel}</td> {/*name*/}
+                            <td>{p.name}</td> {/*name*/}
                             <td>-</td>                {/*contact_number*/}
                             <td>-</td>                {/*gcash_number*/}
                             <td>{formatDateTime(p.createdAt)}</td>
@@ -1542,7 +1550,7 @@ export default function Dashboard() {
           <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
             <h2 className="text-gray-900 font-bold mb-2">Delete participant?</h2>
             <p className="text-sm text-gray-600">
-              This will permanently remove <span className="font-semibold">{parToDelete.testerLabel}</span> and
+              This will permanently remove <span className="font-semibold">{parToDelete.name}</span> and
               its related sessions.
             </p>
             {deleteParError ? <p className="text-xs text-red-600 mt-2">{deleteParError}</p> : null}
@@ -1576,9 +1584,9 @@ export default function Dashboard() {
               <Field label="Participant Name *">
                 <input
                   type="text"
-                  value={parToEdit.testerLabel ?? ""}
+                  value={parToEdit.name ?? ""}
                   onChange={(e) =>
-                    setParToEdit((p) => p ? { ...p, testerLabel: e.target.value } : p)
+                    setParToEdit((p) => p ? { ...p, name: e.target.value } : p)
                   }
                   placeholder="e.g. John Doe"
                   className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#e8174a]/30"
