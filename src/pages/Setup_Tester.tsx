@@ -15,7 +15,7 @@ type Food = {
 };
 type Participant = {
   id: number;
-  testerLabel: string | null;
+  name: string | null;
   age: number | null;
   gender: string | null;
 };
@@ -93,7 +93,7 @@ export default function Setup() {
         setParticipants(
           list.map((p) => ({
             id: Number(p.id),
-            testerLabel: p.testerLabel == null ? null : String(p.testerLabel),
+            name: p.name ?? p.testerLabel ?? null,
             age: p.age == null ? null : Number(p.age),
             gender: p.gender == null ? null : String(p.gender),
           }))
@@ -138,7 +138,7 @@ export default function Setup() {
     const label = participantLabel.trim().toLowerCase();
     if (!label) return null;
     return (
-      participants.find((p) => (p.testerLabel ?? "").trim().toLowerCase() === label) ?? null
+      participants.find((p) => (p.name ?? "").trim().toLowerCase() === label) ?? null
     );
   }, [participantLabel, participants]);
 
@@ -169,7 +169,7 @@ export default function Setup() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          testerLabel: participantLabel.trim(),
+          name: participantLabel.trim(),
           age: participantAge.trim() === "" ? null : Number(participantAge),
           gender: participantGender || null,
         }),
