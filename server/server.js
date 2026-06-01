@@ -6,6 +6,7 @@ import multer from "multer";
 import { mkdir, readFile } from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import readline from 'readline';
 
 const app = express();
 app.use(cors());
@@ -25,6 +26,254 @@ await mkdir(kiosksUploadsDir, { recursive: true });
 await mkdir(participantsUploadsDir, { recursive: true });
 
 const EMOTION_SERVICE_URL = (process.env.EMOTION_SERVICE_URL || "http://127.0.0.1:8765").replace(/\/$/, "");
+
+import { createServer as createHttpServer } from 'http';
+import { createServer as createHttpsServer } from 'https';
+import { Server } from 'socket.io';
+import fs from 'fs';
+import os from 'os';
+
+// use HTTPS if cert files exist, otherwise fall back to HTTP
+let http;
+try {
+  const sslOptions = {
+    key: fs.readFileSync('./key.pem'),
+    cert: fs.readFileSync('./cert.pem'),
+  };
+  http = createHttpsServer(sslOptions, app);
+  console.log('🔒 Running in HTTPS mode');
+} catch {
+  http = createHttpServer(app);
+  console.log('⚠️  cert/key not found — running in HTTP mode');
+}
+const io = new Server(http, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+    transports: ["websocket", "polling"],
+    credentials: true
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000
+});
+
+// ip detection
+function getLocalIP() {
+  const interfaces = os.networkInterfaces();
+  const addresses = [];
+
+  // collect all IPv4 addresses
+  Object.keys(interfaces).forEach((name) => {
+    interfaces[name].forEach((net) => {
+      // skip internal (ie. 127.0.0.1) and non-ipv4 addresses
+      if (net.family === "IPv4" && !net.internal) {
+        console.log(`Found IP on ${name}:`, net.address);
+        addresses.push(net.address);
+      }
+    });
+  });
+
+  // return first non-internal IPv4 address or localhost as fallback
+  return addresses.length > 0 ? addresses[0] : '127.0.0.1';
+}
+
+const localIP = getLocalIP();
+console.log('Using IO:', localIP);
+app.use(express.static(__dirname));
+
+// enable CORS for all routes
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', '*');
+  next();
+});
+
+// make IP address available to client
+app.get('/config', (req, res) => {
+  res.json({ serverIP: localIP });
+});
+
+const rooms = new Map();
+
+// Socket.io connection handling
+io.on('connection', (socket) => {
+  console.log('A user connected:', socket.id);
+
+  socket.on('join-room', (roomId, role) => {
+    if (!rooms.has(roomId)) {
+        rooms.set(roomId, new Map());
+    }
+
+    const room = rooms.get(roomId);
+    room.set(socket.id, { peerId: socket.id, role, streams: new Set() });
+    socket.join(roomId);
+
+    console.log(`User ${socket.id} joined room ${roomId} as ${role}`);
+
+    if (role === 'viewer') {
+      room.forEach((userData, userId) => {
+        if (userId !== socket.id && userData.role === 'host') {
+          io.to(userId).emit('viewer-connected');
+          console.log(`Notified host ${userId} that viewer joined`);
+        }
+      });
+    }
+
+    const existingUsers = Array.from(room.keys()).filter(id => id !== socket.id);
+    socket.emit('existing-users', existingUsers);
+  });
+
+  socket.on('stream-started', (roomId, streamId) => {
+      const room = rooms.get(roomId);
+      if (room && room.has(socket.id)) {
+          const user = room.get(socket.id);
+          user.streams.add(streamId);
+          socket.to(roomId).emit('peer-stream-started', socket.id, streamId);
+      }
+  });
+
+  socket.on('stream-stopped', (roomId, streamId) => {
+      const room = rooms.get(roomId);
+      if (room && room.has(socket.id)) {
+          const user = room.get(socket.id);
+          user.streams.delete(streamId);
+          socket.to(roomId).emit('peer-stream-stopped', socket.id, streamId);
+      }
+  });
+
+  socket.on('signal', (data) => {
+    console.log(`Signal received from ${socket.id} for room ${data.room}`);
+    // Extract room, then forward the rest of the signal packet (sdp or candidate) to everyone else in the room
+    const { room, ...signalData } = data;
+    socket.to(room).emit('signal', signalData);
+  });
+
+  // list of all users in the room
+  socket.on('list-users', (roomId) => {
+      const room = rooms.get(roomId);
+      const users = [];
+      if (room) {
+          room.forEach((userData, userId) => {
+              users.push({
+                  id: userId,
+                  streams: Array.from(userData.streams)
+              });
+          });
+      }
+      socket.emit('list-users', users);
+  });
+
+  socket.on('console-command', (command) => {
+      switch(command) {
+          case 'people':
+              let response = '\n=== Current Rooms and Users ===\n';
+              if (rooms.size === 0) {
+                  response += 'No active rooms';
+              } else {
+                  rooms.forEach((users, roomId) => {
+                      response += `\nRoom ${roomId}:\n`;
+                      response += `Users: ${Array.from(users)}\n`;
+                      response += `Total users in room: ${users.size}\n`;
+                  });
+                  response += `\nTotal rooms: ${rooms.size}\n`;
+                  response += `Total users: ${Array.from(rooms.values()).reduce((acc, room) => acc + room.size, 0)}`;
+              }
+              socket.emit('console-response', response);
+              break;
+
+          case 'clear':
+              const totalRooms = rooms.size;
+              const totalUsers = Array.from(rooms.values()).reduce((acc, room) => acc + room.size, 0);
+              
+              rooms.forEach((users, roomId) => {
+                  io.to(roomId).emit('force-disconnect', 'Server clearing all rooms');
+              });
+              
+              rooms.clear();
+              socket.emit('console-response', `Cleared ${totalRooms} rooms and disconnected ${totalUsers} users`);
+              break;
+      }
+  });
+
+  // handle disconnection
+  socket.on('disconnect', () => {
+      rooms.forEach((users, roomId) => {
+          if (users.has(socket.id)) {
+              const user = users.get(socket.id);
+              // notify others about all streams that were active
+              user.streams.forEach(streamId => {
+                  socket.to(roomId).emit('peer-stream-stopped', socket.id, streamId);
+              });
+              // notify viewers when the host disconnects
+              if (user.role === 'host') {
+                  socket.to(roomId).emit('host-disconnected');
+              }
+              users.delete(socket.id);
+              if (users.size === 0) {
+                  rooms.delete(roomId);
+              }
+              socket.to(roomId).emit('user-disconnected', socket.id);
+          }
+      });
+      console.log('User disconnected:', socket.id);
+  });
+
+  socket.on('force-disconnect', () => {
+      socket.disconnect(true);
+  });
+});
+
+// console commands for server management
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
+
+rl.on('line', (input) => {
+  switch(input.toLowerCase()) {
+      case 'people':
+          console.log('\n=== Current Rooms and Users ===');
+          if (rooms.size === 0) {
+              console.log('No active rooms');
+          } else {
+              rooms.forEach((users, roomId) => {
+                  console.log(`\nRoom ${roomId}:`);
+                  console.log('Users:', Array.from(users));
+                  console.log('Total users in room:', users.size);
+              });
+              console.log('\nTotal rooms:', rooms.size);
+              console.log('Total users:', Array.from(rooms.values()).reduce((acc, room) => acc + room.size, 0));
+          }
+          break;
+
+      case 'clear':
+          const totalRooms = rooms.size;
+          const totalUsers = Array.from(rooms.values()).reduce((acc, room) => acc + room.size, 0);
+          
+          // notify all users in all rooms that they're being disconnected
+          rooms.forEach((users, roomId) => {
+              io.to(roomId).emit('force-disconnect', 'Server clearing all rooms');
+          });
+          
+          // clear all rooms
+          rooms.clear();
+          console.log(`Cleared ${totalRooms} rooms and disconnected ${totalUsers} users`);
+          break;
+
+      case 'help':
+          console.log('\nAvailable commands:');
+          console.log('people - Show all rooms and users');
+          console.log('clear  - Disconnect all users and clear all rooms');
+          console.log('help   - Show this help message');
+          break;
+
+      default:
+          console.log('Unknown command. Type "help" for available commands');
+  }
+});
+
+const port = process.env.PORT || 8888;
 
 async function clearEmotionHistory(sessionId) {
   try {
@@ -351,6 +600,66 @@ async function start() {
       });
     } catch (err) {
       console.error("POST /api/participants error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  app.delete("/api/participants/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ ok: false, error: "Invalid id." });
+    }
+    try {
+      const [result] = await pool.query(
+        `DELETE FROM participants WHERE participant_id = ?`,
+        [id]
+      );
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ ok: false, error: "Participant not found." });
+      }
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("DELETE /api/participants error:", err);
+      return res.status(500).json({ ok: false, error: "Server error." });
+    }
+  });
+
+  app.put("/api/participants/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ ok: false, error: "Invalid id." });
+    }
+    const rawLabel = req.body?.testerLabel;
+    const testerLabel = typeof rawLabel === "string" ? rawLabel.trim() : "";
+    const ageRaw = req.body?.age;
+    const genderRaw = req.body?.gender;
+    if (!testerLabel) {
+      return res.status(400).json({ ok: false, error: "testerLabel is required." });
+    }
+    const age =
+      ageRaw == null || ageRaw === ""
+        ? null
+        : Number.isFinite(Number(ageRaw))
+          ? Math.round(Number(ageRaw))
+          : null;
+    const allowedGenders = new Set(["male", "female", "other"]);
+    const gender = genderRaw == null || genderRaw === "" ? null : String(genderRaw);
+    if (gender != null && !allowedGenders.has(gender)) {
+      return res.status(400).json({ ok: false, error: "gender must be male, female, or other." });
+    }
+    try {
+      const [result] = await pool.query(
+        `UPDATE participants
+        SET tester_label = ?, age = ?, gender = ?
+        WHERE participant_id = ?`,
+        [testerLabel, age, gender, id]
+      );
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ ok: false, error: "Participant not found." });
+      }
+      return res.json({ ok: true, participant: { id, testerLabel, age, gender } });
+    } catch (err) {
+      console.error("PUT /api/participants error:", err);
       return res.status(500).json({ ok: false, error: "Server error." });
     }
   });
@@ -1496,12 +1805,38 @@ async function start() {
     }
   });
 
-  
-
-  const port = process.env.PORT || 8080;
-  app.listen(port, () => {
-    console.log(`API server listening on http://localhost:${port}`);
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../index.html'));
   });
+
+  http.listen(port, '0.0.0.0', () => {
+    const networks = os.networkInterfaces();
+    console.log('\n=== Network Interfaces ===');
+    let validIPs = [];
+    Object.keys(networks).forEach(name => {
+      networks[name].forEach(net => {
+        if (net.family === 'IPv4' && !net.internal) {
+          validIPs.push({ interface: name, ip: net.address });
+          console.log(`\n${name}:`);
+          console.log(`  IP: ${net.address}`);
+        }
+      });
+    });
+    const protocol = (http.constructor.name === 'Server' && http._events && http._tlsOptions) || http.constructor.name === 'Server' ? 'https' : 'http';
+    console.log('\n=== Connection URLs ===');
+    if (validIPs.length > 0) {
+      console.log('\n📱 For mobile devices:');
+      validIPs.forEach(({ ip }) => console.log(`  https://${ip}:${port}`));
+    }
+    console.log('\n💻 Local: https://localhost:' + port);
+    if (validIPs.length > 0) console.log('\n✅ Recommended: https://' + validIPs[0].ip + ':' + port);
+    console.log('\n=== Server is running ===\n');
+  });
+
+  // const port = process.env.PORT || 8080;
+  // app.listen(port, () => {
+  //   console.log(`API server listening on http://localhost:${port}`);
+  // });
 }
 
 start().catch((err) => {
