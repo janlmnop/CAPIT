@@ -140,8 +140,8 @@ function statusClasses(status: SessionStatus) {
 
 // dynamic API base
 const API_BASE = window.location.hostname === 'localhost'
-  ? 'https://localhost:8888'
-  : `https://${window.location.hostname}:8888`;
+  ? 'https://localhost:8080'
+  : `https://${window.location.hostname}:8080`;
 
 const toApiUrl = (url: string | null) => {
   if (!url) return null;

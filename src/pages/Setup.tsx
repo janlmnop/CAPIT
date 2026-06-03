@@ -15,7 +15,7 @@ type Participant = {
   gender: string | null;
 };
 
-const API_BASE = "http://localhost:8080";
+const API_BASE = "https://localhost:8080";
 
 function getStoredUserId(): number {
   try {

@@ -273,7 +273,7 @@ rl.on('line', (input) => {
   }
 });
 
-const port = process.env.PORT || 8888;
+const port = process.env.PORT || 8080;
 
 async function clearEmotionHistory(sessionId) {
   try {
