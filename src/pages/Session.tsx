@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { performLogout } from "../RequireAuth";
 import logo from "../assets/logo.png";
 
-const API_BASE = "http://localhost:8080";
+const API_BASE = "https://localhost:8080";
 const FRAME_CAPTURE_MS = 750;
 // Use backend so session_id in this page matches DB rows.
 const USE_DB = true;
