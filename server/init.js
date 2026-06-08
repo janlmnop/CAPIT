@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 function createPool() {
   // Example: mysql://user:password@localhost:3306/familis_db
   const connectionString =
-    process.env.DATABASE_URL || "mysql://root:Dlsu1234!@localhost:3306/familis_db";
+    process.env.DATABASE_URL || "mysql://root:@localhost:3306/familis_db";
 
   const url = new URL(connectionString);
 
@@ -30,7 +30,7 @@ function createPool() {
 async function tableExists(pool, table) {
   const [rows] = await pool.query(
     `SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1`,
-    [table]
+    [table],
   );
   return Array.isArray(rows) && rows.length > 0;
 }
@@ -38,7 +38,7 @@ async function tableExists(pool, table) {
 async function columnExists(pool, table, column) {
   const [rows] = await pool.query(
     `SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1`,
-    [table, column]
+    [table, column],
   );
   return Array.isArray(rows) && rows.length > 0;
 }
@@ -46,40 +46,91 @@ async function columnExists(pool, table, column) {
 async function ensureColumn(pool, table, column, definition) {
   if (!(await tableExists(pool, table))) return;
   if (await columnExists(pool, table, column)) return;
-  await pool.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
+  await pool.query(
+    `ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`,
+  );
 }
 
 async function ensureSchemaColumns(pool) {
   const columns = [
     { table: "users", column: "password_hash", definition: "TEXT NULL" },
-    { table: "users", column: "role", definition: "ENUM('staff','admin') NOT NULL DEFAULT 'staff'" },
-    { table: "users", column: "created_at", definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP" },
+    {
+      table: "users",
+      column: "role",
+      definition: "ENUM('staff','admin') NOT NULL DEFAULT 'staff'",
+    },
+    {
+      table: "users",
+      column: "created_at",
+      definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP",
+    },
     { table: "users", column: "last_login", definition: "TIMESTAMP NULL" },
     { table: "kiosk", column: "location", definition: "TEXT NULL" },
     { table: "kiosk", column: "image_url", definition: "TEXT NULL" },
-    { table: "kiosk", column: "created_at", definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP" },
+    {
+      table: "kiosk",
+      column: "created_at",
+      definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP",
+    },
     { table: "participants", column: "kiosk_id", definition: "INT NULL" },
-    { table: "participants", column: "contact_number", definition: "VARCHAR(50) NULL" },
-    { table: "participants", column: "gcash_number", definition: "VARCHAR(50) NULL" },
+    {
+      table: "participants",
+      column: "contact_number",
+      definition: "VARCHAR(50) NULL",
+    },
+    {
+      table: "participants",
+      column: "gcash_number",
+      definition: "VARCHAR(50) NULL",
+    },
     { table: "participants", column: "age", definition: "INT NULL" },
-    { table: "participants", column: "gender", definition: "ENUM('male','female','other') NULL" },
+    {
+      table: "participants",
+      column: "gender",
+      definition: "ENUM('male','female','other') NULL",
+    },
     { table: "participants", column: "photo_url", definition: "TEXT NULL" },
-    { table: "participants", column: "created_at", definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP" },
+    {
+      table: "participants",
+      column: "created_at",
+      definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP",
+    },
     { table: "food_products", column: "image_url", definition: "TEXT NULL" },
-    { table: "food_products", column: "created_at", definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP" },
+    {
+      table: "food_products",
+      column: "created_at",
+      definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP",
+    },
     { table: "sessions", column: "kiosk_id", definition: "INT NULL" },
     { table: "sessions", column: "participant_id", definition: "INT NULL" },
     {
       table: "sessions",
       column: "status",
-      definition: "ENUM('pending','active','completed','cancelled') NOT NULL DEFAULT 'pending'",
+      definition:
+        "ENUM('pending','active','completed','cancelled') NOT NULL DEFAULT 'pending'",
     },
-    { table: "sessions", column: "created_at", definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP" },
+    {
+      table: "sessions",
+      column: "created_at",
+      definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP",
+    },
     { table: "frame_logs", column: "frame_image_url", definition: "TEXT NULL" },
-    { table: "frame_logs", column: "created_at", definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP" },
-    { table: "system_logs", column: "created_at", definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP" },
+    {
+      table: "frame_logs",
+      column: "created_at",
+      definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP",
+    },
+    {
+      table: "system_logs",
+      column: "created_at",
+      definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP",
+    },
     { table: "survey_results", column: "remarks", definition: "TEXT NULL" },
-    { table: "survey_results", column: "created_at", definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP" },
+    {
+      table: "survey_results",
+      column: "created_at",
+      definition: "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP",
+    },
   ];
 
   for (const { table, column, definition } of columns) {
@@ -110,7 +161,7 @@ export async function initDb() {
       username = VALUES(username),
       password_hash = VALUES(password_hash);
   `,
-    ["admin", "admin@familis.com", adminPasswordHash, "admin"]
+    ["admin", "admin@familis.com", adminPasswordHash, "admin"],
   );
 
   /**
@@ -184,4 +235,3 @@ export async function initDb() {
 
   return pool;
 }
-
